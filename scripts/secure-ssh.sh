@@ -2,8 +2,6 @@
 
 # ============================================
 # sec-ur-serv: Secure SSH Hardening Script
-# Author: 13winged
-# Repository: https://github.com/13winged/sec-ur-serv
 # ============================================
 
 set -euo pipefail
@@ -33,7 +31,7 @@ print_msg() {
 # Print header
 print_header() {
     echo -e "\n${colors[CYAN]}╔════════════════════════════════════════════════════════════╗${colors[NC]}"
-    echo -e "${colors[CYAN]}║$1${colors[NC]}"
+    echo -e "${colors[CYAN]}║                                                             ║$1${colors[NC]}"
     echo -e "${colors[CYAN]}╚════════════════════════════════════════════════════════════╝${colors[NC]}"
 }
 
@@ -553,10 +551,6 @@ Test connection: ssh -o PasswordAuthentication=no localhost
 • Backup your .ssh directory regularly
 
 ────────────────────────────────────────────────────────────
-SUPPORT
-────────────────────────────────────────────────────────────
-GitHub: https://github.com/13winged/sec-ur-serv
-Issues: https://github.com/13winged/sec-ur-serv/issues
 
 EOF
     

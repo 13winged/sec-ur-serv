@@ -2,8 +2,6 @@
 
 # ============================================
 # sec-ur-serv: SSH User Management Tool
-# Author: 13winged
-# Repository: https://github.com/13winged/sec-ur-serv
 # ============================================
 
 set -euo pipefail
