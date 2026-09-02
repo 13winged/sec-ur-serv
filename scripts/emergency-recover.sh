@@ -7,14 +7,36 @@
 
 set -e
 
-echo "🔓 sec-ur-serv Emergency Recovery"
-echo "=================================="
-echo ""
+print_header() {
+    echo ""
+    echo "=================================="
+    echo "🔓 sec-ur-serv Emergency Recovery"
+    echo "=================================="
+    echo ""
+}
 
-# Check root
+print_msg() {
+    echo ">>> $1"
+}
+
+# Check for root
 if [ "$EUID" -ne 0 ]; then
-    echo "❌ Please run as root: sudo $0"
+    print_msg "❌ Please run as root: sudo $0"
     exit 1
+fi
+
+# Check if SSH service is running before proceeding
+print_msg "🔍 Checking SSH service status..."
+systemctl is-active ssh > /dev/null 2>&1
+if [ $? -ne 0 ]; then
+    print_msg "❌ SSH service is NOT running! Attempting to start it..."
+    systemctl start ssh
+    sleep 2
+    systemctl is-active ssh > /dev/null 2>&1
+    if [ $? -ne 0 ]; then
+        print_msg "❌ Failed to start SSH service. Exiting."
+        exit 1
+    fi
 fi
 
 # Find latest backup

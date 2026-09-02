@@ -1,10 +1,10 @@
-## ⚠️ CRITICAL WARNINGS
+## 🚨 CRITICAL WARNINGS: Mandatory Prerequisites
+**SSH Key testing is the absolute first step.** Do not proceed until key authentication is verified.
 
-### **BEFORE YOU START:**
-1. **ALWAYS test SSH key access** before running this tool
-2. **HAVE console access available** as backup (physical/VPN)
-3. **DO NOT close your current session** until you verify the new configuration works
-4. **TEST from another terminal** before closing your current connection
+*   **MANDATORY:** Always test SSH key access first (`ssh -o PasswordAuthentication=no localhost`).
+*   **REQUIRED:** Ensure console access (physical/VPN) is available as a fallback.
+*   **SAFETY:** Never close your current terminal session until the new configuration is validated.
+*   **VERIFICATION:** Test connectivity from a *separate* terminal session before concluding setup.
 
 ### **Quick Verification:**
 ```bash
@@ -15,21 +15,21 @@ ssh -o PasswordAuthentication=no localhost
 
 ---
 
-## 🚀 Quick Start
+## 🚀 Quick Start: Initialize Setup
 
-### **Option 1: One-line Installation & Setup**
+### **Install with One Command (Recommended)**
 ```bash
-# Download and run the complete security setup
+# Download and execute the complete security setup script
 bash <(curl -s https://raw.githubusercontent.com/13winged/sec-ur-serv/main/scripts/install-secure-ssh.sh)
 ```
 
-### **Option 2: Manual Installation**
+### **Install Manually**
 ```bash
-# Clone repository
+# Clone the repository
 git clone https://github.com/13winged/sec-ur-serv.git
 cd sec-ur-serv
 
-# Install the tool
+# Install the tool using the main script
 sudo scripts/install-secure-ssh.sh
 ```
 
@@ -93,32 +93,31 @@ After installation, these commands become available:
 
 ---
 
-## ⚡ Usage
+## ⚙️ Usage: The Imperative Workflow
+Follow these steps in strict sequence to ensure a secure transition.
 
-### **Step 1: Test SSH Keys (CRITICAL FIRST STEP)**
+### **Step 1: Validate SSH Key Access (CRITICAL)**
+Verify your SSH keys function correctly without prompting for a password.
 ```bash
-# Verify your SSH keys work
 ssh -o PasswordAuthentication=no localhost
-
-# If this fails, DO NOT proceed!
-# Fix SSH keys first: ssh-keygen -t ed25519 && ssh-copy-id localhost
+# If this fails, fix SSH keys NOW: ssh-keygen -t ed25519 && ssh-copy-id localhost
 ```
 
-### **Step 2: Dry Run (Safe Testing)**
+### **Step 2: Perform Dry Run (Non-Destructive Check)**
+Run the tool to preview all configuration changes it *will* make.
 ```bash
-# Test configuration without making changes
 sudo secure-ssh --dry-run
 ```
 
 ### **Step 3: Apply Security Hardening**
+Execute the main command to apply all configured security patches.
 ```bash
-# Apply all security changes
 sudo secure-ssh
 ```
 
-### **Step 4: Manage Users**
+### **Step 4: Manage Users (Post-Setup)**
+Access the interactive menu to add, remove, or manage keys for existing users.
 ```bash
-# Interactive menu for user management
 sudo manage-ssh-users
 ```
 
@@ -237,8 +236,8 @@ Additional Security Measures
 ✅ Permission hardening (700/600 for SSH files)
 
 Encryption Algorithms Enabled
-Ciphers: chacha20-poly1305@openssh.com, aes256-gcm@openssh.com, aes128-gcm@openssh.com
+**Ciphers:** `chacha20-poly1305@openssh.com`, `aes256-gcm@openssh.com`, `aes128-gcm@openssh.com`
 
-KEX: curve25519-sha256, curve25519-sha256@libssh.org
+**KEX:** `curve25519-sha256`, `curve25519-sha256@libssh.org`
 
-MACs: hmac-sha2-512-etm@openssh.com, hmac-sha2-256-etm@openssh.com
+**MACs:** `hmac-sha2-512-etm@openssh.com`, `hmac-sha2-256-etm@openssh.com`
