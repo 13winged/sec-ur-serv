@@ -9,7 +9,7 @@ set -euo pipefail
 
 REPO_URL="https://github.com/13winged/sec-ur-serv"
 INSTALL_DIR="/opt/sec-ur-serv"
-VERSION="1.0.0"
+VERSION="2.0.0"
 
 # Colors
 RED='\033[0;31m'
@@ -28,15 +28,16 @@ print_header() {
     echo -e "${NC}"
 }
 
-# Check system
-check_system() {
-    if [ "$EUID" -ne 0 ]; then
-        print_msg "$RED" "Please run as root: sudo $0"
-        exit 1
-    fi
+check_ssh_connectivity() {
+    print_header "Checking SSH Connectivity..."
     
-    if [ ! -f /etc/debian_version ] && [ ! -f /etc/lsb-release ]; then
-        print_msg "$RED" "Only Ubuntu/Debian supported"
+    # Try connecting to localhost on port 22 without password authentication
+    if ssh -o ConnectTimeout=5 -o BatchMode=yes -o StrictHostKeyChecking=no localhost 2>&1 | grep -q "Connected to localhost"; then
+        print_msg "$GREEN" "✓ SSH Connectivity Check: SUCCESS (Connected to localhost)"
+    else
+        print_msg "$RED" "✗ SSH Connectivity Check: FAIL (Could not connect to localhost:22)"
+        print_msg "$YELLOW" "Please ensure SSH server is running and your key is set up correctly."
+        print_msg "$YELLOW" "Run 'ssh -o PasswordAuthentication=no localhost' manually to test."
         exit 1
     fi
 }
@@ -132,12 +133,23 @@ EOF
 install_deps() {
     print_header "Installing Dependencies"
     
+    echo -e "${BLUE}-> Running apt-get update...${NC}"
     apt-get update
+    if [ $? -ne 0 ]; then
+        print_msg "$RED" "✗ ERROR: apt-get update failed!"
+        exit 1
+    fi
+
+    echo -e "${BLUE}-> Running apt-get install...${NC}"
     apt-get install -y \
         openssh-server \
         sshpass \
         curl \
         net-tools
+    if [ $? -ne 0 ]; then
+        print_msg "$RED" "✗ ERROR: apt-get install failed!"
+        exit 1
+    fi
     
     print_msg "$GREEN" "✓ Dependencies installed"
 }
@@ -186,7 +198,7 @@ show_completion() {
     print_header "Installation Complete!"
     
     cat << EOF
-
+## Summary
 ${GREEN}✅ sec-ur-serv v$VERSION successfully installed!${NC}
 
 ${CYAN}📁 Installation Directory:${NC}
@@ -200,11 +212,11 @@ ${CYAN}🚀 Available Commands:${NC}
 ${CYAN}🔧 Quick Start:${NC}
   1. First, test your SSH keys:
      ${BLUE}ssh -o PasswordAuthentication=no localhost${NC}
-  
+
   2. Secure your SSH configuration:
      ${BLUE}secure-ssh --dry-run${NC}     (Test first)
      ${BLUE}secure-ssh${NC}               (Apply changes)
-  
+
   3. Manage users:
      ${BLUE}manage-ssh-users${NC}         (Interactive menu)
 
@@ -219,6 +231,10 @@ ${CYAN}📚 Documentation:${NC}
 
 ${GREEN}🎉 Ready to secure your server!${NC}
 EOF
+    
+    # Aggressive: Immediately run secure-ssh in dry-run mode for quick feedback
+    print_msg "$BLUE" "\n--- Running 'secure-ssh --dry-run' for immediate feedback ---"
+    sudo secure-ssh --dry-run
 }
 
 # Main installation
@@ -228,7 +244,13 @@ main() {
     echo -e "${BLUE}        Secure SSH Hardening Tool by 13winged${NC}"
     echo ""
     
-    # Check system
+    # Aggressive check: Check existence of main SSH config file
+if [ ! -f /etc/ssh/sshd_config ]; then
+    print_msg "$RED" "✗ AGGRESSIVE CHECK FAIL: /etc/ssh/sshd_config is missing!"
+    print_msg "$YELLOW" "SSH server is likely not installed or configured. Please install OpenSSH server."
+    echo ""
+fi
+
     check_system
     
     # Show warning

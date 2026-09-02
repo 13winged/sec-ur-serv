@@ -6,7 +6,7 @@
 
 set -euo pipefail
 
-VERSION="1.0.0"
+VERSION="2.0.0"
 SCRIPT_NAME="manage-ssh-users.sh"
 
 # Colors
@@ -43,7 +43,8 @@ show_menu() {
     echo "6. Test SSH access for user"
     echo "7. Backup SSH configurations"
     echo "8. Restore from backup"
-    echo "9. Exit"
+    echo "9. Switch User"
+    echo "# Update Key (New Function)"
     echo ""
 }
 
@@ -91,24 +92,17 @@ list_users() {
     last -10 | grep -E "ssh.*pts" || echo "  No recent SSH logins found"
 }
 
-# Add user to SSH access
+# Update Key (New Function)
 add_user() {
     local user=$1
     
     print_header "Adding User: $user"
     
     # Check if user exists
-    if ! id "$user" &>/dev/null; then
-        print_msg "RED" "User $user does not exist"
-        read -p "Create user? (y/N): " -n 1 create_user
-        echo ""
-        
-        if [[ $create_user =~ ^[Yy]$ ]]; then
-            adduser "$user"
-            print_msg "GREEN" "User $user created"
-        else
-            return 1
-        fi
+    if ! id -u "$USERNAME" &> /dev/null; then
+        print_msg "RED" "User $USERNAME does not exist"
+        print_msg "RED" "Error: User $USERNAME not found."
+        return 1
     fi
     
     # Add to AllowUsers in sshd_config
@@ -145,8 +139,41 @@ add_user() {
     
     return 0
 }
+    if grep -q "^AllowUsers" /etc/ssh/sshd_config; then
+        # Check if already in list
+        if grep -q "AllowUsers.*\b$user\b" /etc/ssh/sshd_config; then
+            print_msg "YELLOW" "User $user already in AllowUsers list"
+        else
+            # Append to existing list
+            sed -i "s/^AllowUsers \(.*\)$/AllowUsers \1 $user/" /etc/ssh/sshd_config
+            print_msg "GREEN" "Added $user to AllowUsers"
+        fi
+    else
+        # Create new AllowUsers line
+        echo "AllowUsers $user" >> /etc/ssh/sshd_config
+        print_msg "GREEN" "Created AllowUsers with $user"
+    fi
+    
+    # Setup .ssh directory
+    local home=$(getent passwd "$user" | cut -d: -f6)
+    mkdir -p "$home/.ssh"
+    chmod 700 "$home/.ssh"
+    chown -R "$user:$user" "$home/.ssh"
+    
+    print_msg "GREEN" "Created .ssh directory for $user"
+    
+    # Ask about generating key
+    read -p "Generate SSH key for $user? (Y/n): " -n 1 gen_key
+    echo ""
+    
+    if [[ ! $gen_key =~ ^[Nn]$ ]]; then
+        generate_key "$user"
+    fi
+    
+    return 0
+}
 
-# Remove user from SSH access
+# Update Key (New Function)
 remove_user() {
     local user=$1
     
@@ -174,7 +201,7 @@ remove_user() {
     fi
 }
 
-# Generate SSH key for user
+# Update Key (New Function)
 generate_key() {
     local user=$1
     local key_type=${2:-ed25519}
@@ -195,7 +222,7 @@ generate_key() {
     chown "$user:$user" "$home/.ssh"
     
     # Generate key
-    print_msg "BLUE" "Generating $key_type key for $user..."
+    print_msg "BLUE" "🔑 Обновление ключа для $user..."
     
     sudo -u "$user" ssh-keygen -t "$key_type" \
         -C "$user@$(hostname)_$(date +%Y-%m-%d)" \
@@ -208,7 +235,7 @@ generate_key() {
     chmod 600 "$home/.ssh/authorized_keys"
     chown "$user:$user" "$home/.ssh/authorized_keys"
     
-    print_msg "GREEN" "SSH key generated for $user"
+    print_msg "BLUE" "🔑 Обновление ключа для $user..."
     print_msg "BLUE" "Private key: $key_path"
     print_msg "BLUE" "Public key:"
     cat "$key_path.pub"
@@ -278,8 +305,30 @@ test_access() {
     fi
 }
 
-# Backup SSH configurations
-backup_configs() {
+# Update Key (New Function)
+switch_user() {
+    print_header "🔄 Switching User Mode"
+    
+    # 1. Ask user for username
+    read -p "Enter username to switch to: " USERNAME
+    
+    if [ -z "$USERNAME" ]; then
+        print_msg "YELLOW" "No username entered. Returning to menu."
+        return 0
+    fi
+    
+    # 2. Check if user exists
+    if ! id -u "$USERNAME" &> /dev/null; then
+        print_msg "RED" "User '$USERNAME' does not exist!"
+        print_msg "RED" "Error: User $USERNAME not found."
+        return 1
+    fi
+    
+    # 3. Output connection instruction
+    print_msg "GREEN" "✅ Готово! Выполните: ssh -t $USERNAME@localhost"
+    
+    return 0
+}
     print_header "Backup SSH Configurations"
     
     local timestamp=$(date +%Y%m%d_%H%M%S)
@@ -349,58 +398,61 @@ interactive_menu() {
         read -p "Select option [1-9]: " choice
         
         case $choice in
-            1)
-                list_users
-                ;;
-            2)
-                read -p "Enter username to add: " username
-                if [ -n "$username" ]; then
-                    add_user "$username"
-                fi
-                ;;
-            3)
-                read -p "Enter username to remove: " username
-                if [ -n "$username" ]; then
-                    remove_user "$username"
-                fi
-                ;;
-            4)
-                read -p "Enter username: " username
-                read -p "Key type [ed25519/rsa]: " key_type
-                if [ -n "$username" ]; then
-                    generate_key "$username" "${key_type:-ed25519}"
-                fi
-                ;;
-            5)
-                show_config
-                ;;
-            6)
-                read -p "Enter username to test: " username
-                if [ -n "$username" ]; then
-                    test_access "$username"
-                fi
-                ;;
-            7)
-                backup_configs
-                ;;
-            8)
-                print_msg "YELLOW" "Restore from latest backup:"
-                local latest_backup=$(find /etc/ssh -name "backup_users_*" -type d | sort -r | head -1)
-                if [ -n "$latest_backup" ]; then
-                    echo "Found: $latest_backup"
-                    read -p "Restore from this backup? (y/N): " -n 1 confirm
-                    echo ""
-                    if [[ $confirm =~ ^[Yy]$ ]]; then
-                        (cd "$latest_backup" && ./restore.sh)
+                1)
+                    list_users
+                    ;;
+                2)
+                    read -p "Enter username to add: " username
+                    if [ -n "$username" ]; then
+                        add_user "$username"
                     fi
-                else
-                    print_msg "RED" "No user backups found"
-                fi
-                ;;
-            9)
-                echo "Exiting..."
-                exit 0
-                ;;
+                    ;;
+                3)
+                    read -p "Enter username to remove: " username
+                    if [ -n "$username" ]; then
+                        remove_user "$username"
+                    fi
+                    ;;
+                4)
+                    read -p "Enter username: " username
+                    read -p "Key type [ed25519/rsa]: " key_type
+                    if [ -n "$username" ]; then
+                        generate_key "$username" "${key_type:-ed25519}"
+                    fi
+                    ;;
+                5)
+                    show_config
+                    ;;
+                6)
+                    read -p "Enter username to test: " username
+                    if [ -n "$username" ]; then
+                        test_access "$username"
+                    fi
+                    ;;
+                7)
+                    backup_configs
+                    ;;
+                8)
+                    print_msg "YELLOW" "Restore from latest backup:"
+                    local latest_backup=$(find /etc/ssh -name "backup_users_*" -type d | sort -r | head -1)
+                    if [ -n "$latest_backup" ]; then
+                        echo "Found: $latest_backup"
+                        read -p "Restore from this backup? (y/N): " -n 1 confirm
+                        echo ""
+                        if [[ $confirm =~ ^[Yy]$ ]]; then
+                            (cd "$latest_backup" && ./restore.sh)
+                        fi
+                    else
+                        print_msg "RED" "No user backups found"
+                    fi
+                    ;;
+                9)
+                    switch_user
+                    ;;
+                10)
+                    echo "Exiting..."
+                    exit 0
+                    ;;
             *)
                 print_msg "RED" "Invalid option"
                 ;;
