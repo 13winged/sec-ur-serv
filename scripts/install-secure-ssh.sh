@@ -285,8 +285,8 @@ main() {
     print_msg "$YELLOW" "  Make sure you have working SSH key access first!"
     echo ""
     
-    read -p "Continue installation? (yes/NO): " confirm
-    if [ "$confirm" != "yes" ]; then
+    read -p "Continue installation? (y/n): " confirm
+    if [ "$confirm" != "y" ]; then
         echo "Installation cancelled"
         exit 0
     fi
