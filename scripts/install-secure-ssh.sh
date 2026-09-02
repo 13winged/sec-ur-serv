@@ -234,7 +234,6 @@ EOF
     
     # Aggressive: Immediately run secure-ssh in dry-run mode for quick feedback
     print_msg "$BLUE" "\n--- Running 'secure-ssh --dry-run' for immediate feedback ---"
-    secure-ssh --dry-run
 }
 
 # Main installation
