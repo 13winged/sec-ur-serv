@@ -244,13 +244,40 @@ main() {
     echo -e "${BLUE}        Secure SSH Hardening Tool by 13winged${NC}"
     echo ""
     
-    # Aggressive check: Check existence of main SSH config file
-if [ ! -f /etc/ssh/sshd_config ]; then
-    print_msg "$RED" "✗ AGGRESSIVE CHECK FAIL: /etc/ssh/sshd_config is missing!"
-    print_msg "$YELLOW" "SSH server is likely not installed or configured. Please install OpenSSH server."
-    echo ""
-fi
+    # Check for main SSH config file existence
+    if [ ! -f /etc/ssh/sshd_config ]; then
+        print_msg "$RED" "✗ ERROR: /etc/ssh/sshd_config missing!"
+        print_msg "$YELLOW" "SSH server is likely not installed or configured. Please install OpenSSH server."
+        echo ""
+    fi
 
+    # Check system requirements
+    check_system() {
+        print_header "Checking system requirements..."
+        
+        # Check for commands (apt-get, curl, ssh)
+        if ! command -v apt-get &> /dev/null; then
+            print_msg "$RED" "✗ ERROR: apt-get command not found."
+            print_msg "$YELLOW" "This script requires a Debian/Ubuntu based system (apt-get)."
+            exit 1
+        fi
+        
+        # Check for curl
+        if ! command -v curl &> /dev/null; then
+            print_msg "$RED" "✗ ERROR: curl command not found."
+            exit 1
+        fi
+        
+        # Check for ssh
+        if ! command -v ssh &> /dev/null; then
+            print_msg "$RED" "✗ ERROR: ssh command not found."
+            exit 1
+        fi
+        
+        print_msg "$GREEN" "✓ System requirements met!"
+    }
+
+    # Run check
     check_system
     
     # Show warning
