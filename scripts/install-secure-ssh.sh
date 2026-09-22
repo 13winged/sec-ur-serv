@@ -14,7 +14,7 @@ VERSION="2.0.0"
 # Colors
 RED='\033[0;31m'
 GREEN='\033[0;32m'
-YELLOW='\033[0;33m'
+YELLOW='\033[1;33m'
 BLUE='\033[0;34m'
 CYAN='\033[0;36m'
 NC='\033[0m'
@@ -28,14 +28,22 @@ print_header() {
     echo -e "${NC}"
 }
 
+check_root() {
+    if [ "$EUID" -ne 0 ]; then
+        print_msg "$RED" "✗ This installer must be run as root (sudo)."
+        exit 1
+    fi
+}
+
 check_ssh_connectivity() {
     print_header "Checking SSH Connectivity..."
-    
-    # Try connecting to localhost on port 22 without password authentication
-    if ssh -o ConnectTimeout=5 -o BatchMode=yes -o StrictHostKeyChecking=no localhost 2>&1 | grep -q "Connected to localhost"; then
-        print_msg "$GREEN" "✓ SSH Connectivity Check: SUCCESS (Connected to localhost)"
+
+    # BatchMode run of `true`: exit code tells the truth (no greppable banner exists)
+    if ssh -o ConnectTimeout=5 -o BatchMode=yes -o StrictHostKeyChecking=no \
+           -o PasswordAuthentication=no localhost true 2>/dev/null; then
+        print_msg "$GREEN" "✓ SSH Connectivity Check: SUCCESS (key auth to localhost works)"
     else
-        print_msg "$RED" "✗ SSH Connectivity Check: FAIL (Could not connect to localhost:22)"
+        print_msg "$RED" "✗ SSH Connectivity Check: FAIL (key auth to localhost:22 failed)"
         print_msg "$YELLOW" "Please ensure SSH server is running and your key is set up correctly."
         print_msg "$YELLOW" "Run 'ssh -o PasswordAuthentication=no localhost' manually to test."
         exit 1
@@ -51,14 +59,14 @@ download_scripts() {
     
     # Download scripts
     print_msg "$BLUE" "Downloading scripts..."
-    
-    curl -sL "$REPO_URL/raw/main/scripts/secure-ssh.sh" \
+
+    curl -fsSL --max-time 120 --retry 3 "$REPO_URL/raw/main/scripts/secure-ssh.sh" \
         -o "$INSTALL_DIR/secure-ssh.sh"
-    
-    curl -sL "$REPO_URL/raw/main/scripts/manage-ssh-users.sh" \
+
+    curl -fsSL --max-time 120 --retry 3 "$REPO_URL/raw/main/scripts/manage-ssh-users.sh" \
         -o "$INSTALL_DIR/manage-ssh-users.sh"
-    
-    curl -sL "$REPO_URL/raw/main/scripts/install-secure-ssh.sh" \
+
+    curl -fsSL --max-time 120 --retry 3 "$REPO_URL/raw/main/scripts/install-secure-ssh.sh" \
         -o "$INSTALL_DIR/install.sh"
     
     # Make executable
@@ -70,32 +78,6 @@ download_scripts() {
     
     print_msg "$GREEN" "✓ Scripts downloaded to $INSTALL_DIR"
     print_msg "$GREEN" "✓ Commands available: secure-ssh, manage-ssh-users"
-}
-
-# Create systemd service
-create_service() {
-    print_header "Creating System Service"
-    
-    cat > /etc/systemd/system/sec-ur-serv-monitor.service << EOF
-[Unit]
-Description=sec-ur-serv SSH Security Monitor
-After=network.target ssh.service
-Requires=ssh.service
-
-[Service]
-Type=oneshot
-RemainAfterExit=yes
-ExecStart=/bin/echo "sec-ur-serv monitoring active"
-ExecReload=/bin/echo "Configuration reloaded"
-
-[Install]
-WantedBy=multi-user.target
-EOF
-    
-    systemctl daemon-reload
-    systemctl enable sec-ur-serv-monitor.service
-    
-    print_msg "$GREEN" "✓ Monitoring service installed"
 }
 
 # Create configuration
@@ -113,7 +95,6 @@ create_config() {
 SECURE_SSH=true
 BACKUP_ENABLED=true
 EMERGENCY_SCRIPT=true
-MONITORING=true
 
 # Default settings
 DEFAULT_KEY_TYPE=ed25519
@@ -175,11 +156,6 @@ fi
 rm -f /usr/local/bin/secure-ssh
 rm -f /usr/local/bin/manage-ssh-users
 
-# Remove systemd service
-systemctl disable sec-ur-serv-monitor.service 2>/dev/null || true
-rm -f /etc/systemd/system/sec-ur-serv-monitor.service
-systemctl daemon-reload
-
 # Remove configuration
 rm -rf /etc/sec-ur-serv
 
@@ -232,17 +208,20 @@ ${CYAN}📚 Documentation:${NC}
 ${GREEN}🎉 Ready to secure your server!${NC}
 EOF
     
-    # Aggressive: Immediately run secure-ssh in dry-run mode for quick feedback
-    print_msg "$BLUE" "\n--- Running 'secure-ssh --dry-run' for immediate feedback ---"
+    # Actually run secure-ssh in dry-run mode for immediate feedback (read-only)
+    print_msg "$BLUE" "--- Running 'secure-ssh --dry-run' for immediate feedback ---"
+    /usr/local/bin/secure-ssh --dry-run || true
 }
 
 # Main installation
 main() {
-    clear
+    clear 2>/dev/null || true
     print_header "        sec-ur-serv Installation v$VERSION        "
     echo -e "${BLUE}        Secure SSH Hardening Tool by 13winged${NC}"
     echo ""
-    
+
+    check_root
+
     # Check for main SSH config file existence
     if [ ! -f /etc/ssh/sshd_config ]; then
         print_msg "$RED" "✗ ERROR: /etc/ssh/sshd_config missing!"
@@ -278,7 +257,10 @@ main() {
 
     # Run check
     check_system
-    
+
+    # Verify key auth works before touching anything
+    check_ssh_connectivity
+
     # Show warning
     print_msg "$YELLOW" "⚠ WARNING: This tool will disable SSH password authentication"
     print_msg "$YELLOW" "  Make sure you have working SSH key access first!"
@@ -294,7 +276,6 @@ main() {
     install_deps
     download_scripts
     create_config
-    create_service
     create_uninstall
     
     # Final message

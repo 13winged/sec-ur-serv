@@ -176,7 +176,6 @@ sudo manage-ssh-users test developer
 | `PubkeyAuthentication` | yes | **yes** | Enable key-based auth |
 | `PermitRootLogin` | yes/prohibit-password | **prohibit-password** | Secure root access |
 | `AllowUsers` | (none) | **current_user** | Restrict access |
-| `Protocol` | 1,2 | **2** | Disable outdated protocol |
 | Encryption | Default | **Modern ciphers** | Stronger encryption |
 
 ### **Additional Security Measures**
@@ -220,24 +219,3 @@ sudo systemctl restart ssh
 3. Enter single-user/recovery mode
 4. Mount filesystem read-write
 5. Fix SSH configuration
-
-
-Additional Security Measures
-✅ Automatic backups before any changes
-
-✅ Configuration validation with sshd -t
-
-✅ Service monitoring via systemd
-
-✅ Detailed logging for audit trails
-
-✅ Emergency scripts for recovery
-
-✅ Permission hardening (700/600 for SSH files)
-
-Encryption Algorithms Enabled
-**Ciphers:** `chacha20-poly1305@openssh.com`, `aes256-gcm@openssh.com`, `aes128-gcm@openssh.com`
-
-**KEX:** `curve25519-sha256`, `curve25519-sha256@libssh.org`
-
-**MACs:** `hmac-sha2-512-etm@openssh.com`, `hmac-sha2-256-etm@openssh.com`

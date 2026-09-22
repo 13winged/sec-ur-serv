@@ -30,6 +30,19 @@ check_root() {
     }
 }
 
+# Run a command as a user (sudo may be missing on minimal systems)
+ssh_as_user() {
+    local user=$1
+    shift
+    if command -v sudo &>/dev/null; then
+        sudo -u "$user" "$@"
+    elif command -v runuser &>/dev/null; then
+        runuser -u "$user" -- "$@"
+    else
+        su -s /bin/bash "$user" -c "$*"
+    fi
+}
+
 # Show menu
 show_menu() {
     clear
@@ -44,7 +57,7 @@ show_menu() {
     echo "7. Backup SSH configurations"
     echo "8. Restore from backup"
     echo "9. Switch User"
-    echo "# Update Key (New Function)"
+    echo "10. Exit"
     echo ""
 }
 
@@ -92,16 +105,16 @@ list_users() {
     last -10 | grep -E "ssh.*pts" || echo "  No recent SSH logins found"
 }
 
-# Update Key (New Function)
+# Add user to SSH access
 add_user() {
     local user=$1
     
     print_header "Adding User: $user"
     
     # Check if user exists
-    if ! id -u "$USERNAME" &> /dev/null; then
-        print_msg "RED" "User $USERNAME does not exist"
-        print_msg "RED" "Error: User $USERNAME not found."
+    if ! id -u "$user" &> /dev/null; then
+        print_msg "RED" "User $user does not exist"
+        print_msg "RED" "Error: User $user not found."
         return 1
     fi
     
@@ -136,44 +149,11 @@ add_user() {
     if [[ ! $gen_key =~ ^[Nn]$ ]]; then
         generate_key "$user"
     fi
-    
-    return 0
-}
-    if grep -q "^AllowUsers" /etc/ssh/sshd_config; then
-        # Check if already in list
-        if grep -q "AllowUsers.*\b$user\b" /etc/ssh/sshd_config; then
-            print_msg "YELLOW" "User $user already in AllowUsers list"
-        else
-            # Append to existing list
-            sed -i "s/^AllowUsers \(.*\)$/AllowUsers \1 $user/" /etc/ssh/sshd_config
-            print_msg "GREEN" "Added $user to AllowUsers"
-        fi
-    else
-        # Create new AllowUsers line
-        echo "AllowUsers $user" >> /etc/ssh/sshd_config
-        print_msg "GREEN" "Created AllowUsers with $user"
-    fi
-    
-    # Setup .ssh directory
-    local home=$(getent passwd "$user" | cut -d: -f6)
-    mkdir -p "$home/.ssh"
-    chmod 700 "$home/.ssh"
-    chown -R "$user:$user" "$home/.ssh"
-    
-    print_msg "GREEN" "Created .ssh directory for $user"
-    
-    # Ask about generating key
-    read -p "Generate SSH key for $user? (Y/n): " -n 1 gen_key
-    echo ""
-    
-    if [[ ! $gen_key =~ ^[Nn]$ ]]; then
-        generate_key "$user"
-    fi
-    
+
     return 0
 }
 
-# Update Key (New Function)
+# Remove user from SSH access
 remove_user() {
     local user=$1
     
@@ -201,7 +181,7 @@ remove_user() {
     fi
 }
 
-# Update Key (New Function)
+# Generate SSH key pair for a user
 generate_key() {
     local user=$1
     local key_type=${2:-ed25519}
@@ -215,27 +195,33 @@ generate_key() {
     
     local home=$(getent passwd "$user" | cut -d: -f6)
     local key_path="$home/.ssh/id_$key_type"
-    
+
+    if [ -e "$key_path" ] || [ -e "$key_path.pub" ]; then
+        print_msg "YELLOW" "Key already exists: $key_path - refusing to overwrite."
+        print_msg "BLUE" "Remove it manually or choose another key type."
+        return 1
+    fi
+
     # Create .ssh directory
     mkdir -p "$home/.ssh"
     chmod 700 "$home/.ssh"
     chown "$user:$user" "$home/.ssh"
     
     # Generate key
-    print_msg "BLUE" "🔑 Обновление ключа для $user..."
-    
-    sudo -u "$user" ssh-keygen -t "$key_type" \
+    print_msg "BLUE" "🔑 Generating key for $user..."
+
+    ssh_as_user "$user" ssh-keygen -t "$key_type" \
         -C "$user@$(hostname)_$(date +%Y-%m-%d)" \
         -f "$key_path" \
         -N "" \
         -q
-    
+
     # Add to authorized_keys
-    sudo -u "$user" cat "$key_path.pub" >> "$home/.ssh/authorized_keys"
+    ssh_as_user "$user" cat "$key_path.pub" >> "$home/.ssh/authorized_keys"
     chmod 600 "$home/.ssh/authorized_keys"
     chown "$user:$user" "$home/.ssh/authorized_keys"
     
-    print_msg "BLUE" "🔑 Обновление ключа для $user..."
+    print_msg "GREEN" "✓ Key pair generated for $user"
     print_msg "BLUE" "Private key: $key_path"
     print_msg "BLUE" "Public key:"
     cat "$key_path.pub"
@@ -251,9 +237,10 @@ show_config() {
     systemctl status ssh --no-pager | head -3
     
     echo ""
-    echo "SSH Configuration (/etc/ssh/sshd_config):"
+    echo "SSH Configuration (/etc/ssh/sshd_config + sshd_config.d/):"
     echo "----------------------------------------"
     grep -E "^(PasswordAuthentication|PubkeyAuthentication|PermitRootLogin|AllowUsers|Port|Protocol)" /etc/ssh/sshd_config
+    grep -rEh "^(PasswordAuthentication|PubkeyAuthentication|PermitRootLogin|AllowUsers|Port)" /etc/ssh/sshd_config.d/ 2>/dev/null || true
     
     echo ""
     echo "Active SSH Connections:"
@@ -292,8 +279,8 @@ test_access() {
     
     # Test SSH key authentication
     print_msg "BLUE" "Testing SSH key authentication..."
-    
-    if sudo -u "$user" ssh -o PasswordAuthentication=no \
+
+    if ssh_as_user "$user" ssh -o PasswordAuthentication=no \
                            -o ConnectTimeout=5 \
                            -o BatchMode=yes \
                            localhost "echo 'SSH test successful'" 2>/dev/null; then
@@ -305,7 +292,7 @@ test_access() {
     fi
 }
 
-# Update Key (New Function)
+# Print SSH instructions for switching to another user
 switch_user() {
     print_header "🔄 Switching User Mode"
     
@@ -329,6 +316,8 @@ switch_user() {
     
     return 0
 }
+
+backup_configs() {
     print_header "Backup SSH Configurations"
     
     local timestamp=$(date +%Y%m%d_%H%M%S)
@@ -361,11 +350,11 @@ switch_user() {
 set -e
 
 echo "Restoring SSH configuration..."
-cp ssd_config /etc/ssh/sshd_config
+cp sshd_config /etc/ssh/sshd_config
 
-if [ -d ssd_config.d ]; then
+if [ -d sshd_config.d ]; then
     rm -rf /etc/ssh/sshd_config.d
-    cp -r ssd_config.d /etc/ssh/
+    cp -r sshd_config.d /etc/ssh/
 fi
 
 echo "Restoring user keys..."
@@ -395,7 +384,7 @@ EOF
 interactive_menu() {
     while true; do
         show_menu
-        read -p "Select option [1-9]: " choice
+        read -p "Select option [1-10]: " choice
         
         case $choice in
                 1)
@@ -488,7 +477,7 @@ command_line_mode() {
                 print_msg "RED" "Usage: $0 generate-key <username> [key-type]"
                 exit 1
             fi
-            generate_key "$2" "$3"
+            generate_key "$2" "${3:-ed25519}"
             ;;
         "test")
             if [ -z "$2" ]; then

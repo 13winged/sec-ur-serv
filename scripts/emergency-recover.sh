@@ -27,13 +27,11 @@ fi
 
 # Check if SSH service is running before proceeding
 print_msg "🔍 Checking SSH service status..."
-systemctl is-active ssh > /dev/null 2>&1
-if [ $? -ne 0 ]; then
+if ! systemctl is-active --quiet ssh; then
     print_msg "❌ SSH service is NOT running! Attempting to start it..."
     systemctl start ssh
     sleep 2
-    systemctl is-active ssh > /dev/null 2>&1
-    if [ $? -ne 0 ]; then
+    if ! systemctl is-active --quiet ssh; then
         print_msg "❌ Failed to start SSH service. Exiting."
         exit 1
     fi
@@ -79,11 +77,19 @@ if [ -d "$BACKUP_DIR/sshd_config.d" ]; then
     cp -r "$BACKUP_DIR/sshd_config.d" /etc/ssh/
 fi
 
-# Enable password authentication
+# Enable password authentication (append the key if it is missing entirely)
 echo "🔑 Enabling password authentication..."
-sed -i 's/^PasswordAuthentication.*/PasswordAuthentication yes/' /etc/ssh/sshd_config
-sed -i 's/^ChallengeResponseAuthentication.*/ChallengeResponseAuthentication yes/' /etc/ssh/sshd_config
-sed -i 's/^UsePAM.*/UsePAM yes/' /etc/ssh/sshd_config
+for _key in PasswordAuthentication UsePAM ChallengeResponseAuthentication; do
+    if grep -qE "^#?$_key" /etc/ssh/sshd_config; then
+        sed -i -E "s/^#?$_key.*/$_key yes/" /etc/ssh/sshd_config
+    else
+        echo "$_key yes" >> /etc/ssh/sshd_config
+    fi
+done
+
+# Validate BEFORE restart: a broken restored config must not kill sshd
+echo "🔍 Validating configuration..."
+sshd -t || { echo "❌ Restored config is invalid, aborting before restart."; exit 1; }
 
 # Restart SSH
 echo "🔄 Restarting SSH service..."

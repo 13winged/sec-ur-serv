@@ -41,9 +41,31 @@ print_section() {
     echo -e "${colors[BLUE]}────────────────────────────────────────────────────────────${colors[NC]}"
 }
 
+# Resolve invoking user (logname fails without a controlling terminal)
+current_user() {
+    if [ -n "${SUDO_USER:-}" ]; then
+        echo "$SUDO_USER"
+    else
+        logname 2>/dev/null || whoami
+    fi
+}
+
+# Run a command as a user (sudo may be missing on minimal systems)
+ssh_as_user() {
+    local user=$1
+    shift
+    if command -v sudo &>/dev/null; then
+        sudo -u "$user" "$@"
+    elif command -v runuser &>/dev/null; then
+        runuser -u "$user" -- "$@"
+    else
+        su -s /bin/bash "$user" -c "$*"
+    fi
+}
+
 # Show script info
 show_info() {
-    clear
+    clear 2>/dev/null || true
     print_header "                     🔐 sec-ur-serv v${VERSION}                     "
     echo -e "${colors[MAGENTA]}      Secure SSH Hardening Tool by 13winged${colors[NC]}"
     echo -e "${colors[YELLOW]}       Repository: https://github.com/13winged/sec-ur-serv${colors[NC]}"
@@ -61,7 +83,10 @@ check_root() {
 }
 
 # Check system compatibility
+# Args: $1 = "nostart" to skip starting services (read-only dry-run mode)
 check_system() {
+    local allow_start=yes
+    [ "${1:-}" = "nostart" ] && allow_start=no
     print_section "System Compatibility Check"
     
     # Check Ubuntu/Debian
@@ -88,9 +113,13 @@ check_system() {
     fi
     
     if ! systemctl is-active --quiet ssh; then
-        print_msg "YELLOW" "⚠ SSH service is not running"
-        print_msg "BLUE" "  Starting SSH service..."
-        systemctl start ssh
+        if [ "$allow_start" = yes ]; then
+            print_msg "YELLOW" "⚠ SSH service is not running"
+            print_msg "BLUE" "  Starting SSH service..."
+            systemctl start ssh || { print_msg "RED" "✗ Failed to start SSH"; exit 1; }
+        else
+            print_msg "YELLOW" "⚠ SSH service is not running (dry-run: start skipped)"
+        fi
     fi
     
     print_msg "GREEN" "✓ SSH service is active"
@@ -98,14 +127,14 @@ check_system() {
 
 # Test SSH key authentication
 test_ssh_key_auth() {
-    local user=${1:-$(logname)}
+    local user=${1:-$(current_user)}
     local timeout=${2:-5}
-    
+
     print_section "Testing SSH Key Authentication"
     print_msg "BLUE" "Testing SSH key access for user: $user"
-    
+
     # Try to connect using SSH key
-    if sudo -u "$user" ssh -o PasswordAuthentication=no \
+    if ssh_as_user "$user" ssh -o PasswordAuthentication=no \
                            -o ConnectTimeout=$timeout \
                            -o BatchMode=yes \
                            -o StrictHostKeyChecking=no \
@@ -125,7 +154,7 @@ test_ssh_key_auth() {
 
 # Check user SSH keys
 check_user_keys() {
-    local user=${1:-$(logname)}
+    local user=${1:-$(current_user)}
     local home_dir=$(getent passwd "$user" | cut -d: -f6)
     local auth_keys="$home_dir/.ssh/authorized_keys"
     
@@ -150,12 +179,12 @@ check_user_keys() {
     return 1
 }
 
-# Backup SSH configuration
+# Backup SSH configuration (prints go to stderr: stdout carries ONLY the path)
 backup_config() {
     local timestamp=$(date +%Y%m%d_%H%M%S)
     local backup_dir="/etc/ssh/backup_$timestamp"
-    
-    print_section "Creating Backup"
+
+    print_section "Creating Backup" >&2
     
     mkdir -p "$backup_dir"
     
@@ -168,13 +197,13 @@ backup_config() {
     fi
     
     # Backup authorized_keys for current user
-    local user=$(logname)
+    local user=$(current_user)
     local home_dir=$(getent passwd "$user" | cut -d: -f6)
     if [ -f "$home_dir/.ssh/authorized_keys" ]; then
         cp "$home_dir/.ssh/authorized_keys" "$backup_dir/authorized_keys.$user"
     fi
-    
-    print_msg "GREEN" "✓ Backup created at: $backup_dir"
+
+    print_msg "GREEN" "✓ Backup created at: $backup_dir" >&2
     echo "$backup_dir"
 }
 
@@ -219,11 +248,15 @@ if [ -d "$BACKUP_DIR/sshd_config.d" ]; then
     cp -r "$BACKUP_DIR/sshd_config.d" /etc/ssh/
 fi
 
-# Enable password authentication temporarily
+# Enable password authentication temporarily (append if the key is missing entirely)
 echo "🔑 Enabling password authentication temporarily..."
-sed -i 's/^PasswordAuthentication.*/PasswordAuthentication yes/' /etc/ssh/sshd_config
-sed -i 's/^UsePAM.*/UsePAM yes/' /etc/ssh/sshd_config
-sed -i 's/^ChallengeResponseAuthentication.*/ChallengeResponseAuthentication yes/' /etc/ssh/sshd_config
+for _key in PasswordAuthentication UsePAM ChallengeResponseAuthentication; do
+    if grep -qE "^#?$_key" /etc/ssh/sshd_config; then
+        sed -i -E "s/^#?$_key.*/$_key yes/" /etc/ssh/sshd_config
+    else
+        echo "$_key yes" >> /etc/ssh/sshd_config
+    fi
+done
 
 # Restart SSH service
 echo "🔄 Restarting SSH service..."
@@ -260,7 +293,7 @@ EOF
 generate_secure_config() {
     local config_file="/etc/ssh/sshd_config"
     local temp_file="/tmp/sshd_config.secure"
-    local current_user=$(logname)
+    local current_user=$(current_user)
     
     print_section "Generating Secure SSH Configuration"
     
@@ -274,7 +307,6 @@ generate_secure_config() {
 
 # Basic Settings
 Port 22
-Protocol 2
 ListenAddress 0.0.0.0
 SyslogFacility AUTH
 LogLevel VERBOSE
@@ -289,6 +321,7 @@ MaxSessions 10
 # Password Authentication - DISABLED
 PasswordAuthentication no
 ChallengeResponseAuthentication no
+KbdInteractiveAuthentication no
 PermitEmptyPasswords no
 UsePAM no
 
@@ -299,10 +332,9 @@ IgnoreUserKnownHosts no
 IgnoreRhosts yes
 HostbasedAuthentication no
 
-# User Access Control
+# User Access Control (AllowUsers alone restricts access;
+# never combine with DenyUsers/DenyGroups wildcards - they would lock out everyone)
 AllowUsers CURRENT_USER
-DenyUsers *
-DenyGroups *
 
 # Encryption Settings (Modern, Secure)
 Ciphers chacha20-poly1305@openssh.com,aes256-gcm@openssh.com,aes128-gcm@openssh.com,aes256-ctr,aes192-ctr,aes128-ctr
@@ -328,7 +360,6 @@ PrintLastLog yes
 PermitUserEnvironment no
 
 # Chroot and Security
-UsePrivilegeSeparation sandbox
 AllowAgentForwarding yes
 AllowStreamLocalForwarding no
 StreamLocalBindUnlink yes
@@ -377,7 +408,7 @@ verify_config() {
         "PasswordAuthentication no"
         "PubkeyAuthentication yes"
         "PermitRootLogin prohibit-password"
-        "AllowUsers $(logname)"
+        "AllowUsers $(current_user)"
     )
     
     local all_ok=true
@@ -425,10 +456,10 @@ restart_ssh_service() {
 
 # Final verification test
 final_verification() {
-    local user=$(logname)
-    
+    local user=$(current_user)
+
     print_section "Final Verification"
-    
+
     # Test 1: SSH key authentication should work
     print_msg "BLUE" "Test 1: Verifying SSH key authentication..."
     if test_ssh_key_auth "$user" 3; then
@@ -437,15 +468,20 @@ final_verification() {
         print_msg "RED" "✗ SSH key authentication failed"
         return 1
     fi
-    
+
     # Test 2: Password authentication should fail
     print_msg "BLUE" "Test 2: Verifying password authentication is disabled..."
-    
-    # Install sshpass if not present (just for test)
+
+    # Install sshpass if not present (just for test; never fatal)
+    local have_sshpass=true
     if ! command -v sshpass &> /dev/null; then
-        apt-get update && apt-get install -y sshpass > /dev/null 2>&1
+        if ! apt-get update >/dev/null 2>&1 || ! apt-get install -y sshpass >/dev/null 2>&1; then
+            print_msg "YELLOW" "⚠ sshpass unavailable, skipping password-rejection test"
+            have_sshpass=false
+        fi
     fi
-    
+
+    if [ "$have_sshpass" = true ]; then
     # Try to connect with password (should fail)
     if sshpass -p 'wrongpassword' ssh -o ConnectTimeout=3 \
                                       -o PasswordAuthentication=yes \
@@ -455,6 +491,7 @@ final_verification() {
         print_msg "GREEN" "✓ Password authentication correctly rejected"
     else
         print_msg "YELLOW" "⚠ Could not verify password authentication status"
+    fi
     fi
     
     # Test 3: Check SSH service status
@@ -471,7 +508,8 @@ final_verification() {
 
 # Generate summary report
 generate_summary() {
-    local user=$(logname)
+    local user=$(current_user)
+    local user_home=$(getent passwd "$user" | cut -d: -f6)
     local report_file="/root/sec-ur-serv-report-$(date +%Y%m%d_%H%M%S).txt"
     
     print_section "Generating Security Report"
@@ -519,8 +557,8 @@ Usage: sudo /root/ssh_emergency_revert.sh
 USER SSH KEYS
 ────────────────────────────────────────────────────────────
 User: $user
-Authorized Keys: $HOME/.ssh/authorized_keys
-Key Count: $(grep -c "^ssh-" "$HOME/.ssh/authorized_keys" 2>/dev/null || echo 0)
+Authorized Keys: $user_home/.ssh/authorized_keys
+Key Count: $(grep -c "^ssh-" "$user_home/.ssh/authorized_keys" 2>/dev/null || echo 0)
 
 ────────────────────────────────────────────────────────────
 SECURITY RECOMMENDATIONS
@@ -565,7 +603,7 @@ EOF
 
 # Show completion message
 show_completion() {
-    local user=$(logname)
+    local user=$(current_user)
     
     print_header "                     🎉 SETUP COMPLETE!                     "
     
@@ -621,10 +659,10 @@ main() {
     check_root
     check_system
     
-    # Get current user
-    CURRENT_USER=$(logname)
+    # Get current user (logname fails without a terminal - fall back gracefully)
+    CURRENT_USER=$(current_user)
     if [ -z "$CURRENT_USER" ]; then
-        CURRENT_USER=$(who am i | awk '{print $1}')
+        CURRENT_USER=$(whoami)
     fi
     
     print_header "               Starting Security Hardening               "
@@ -690,10 +728,10 @@ dry_run() {
     
     print_msg "YELLOW" "This is a dry run. No changes will be made."
     echo ""
-    
-    check_system
-    
-    CURRENT_USER=$(logname)
+
+    check_system nostart
+
+    CURRENT_USER=$(current_user)
     print_section "System Check Results"
     print_msg "BLUE" "Current user: $CURRENT_USER"
     
